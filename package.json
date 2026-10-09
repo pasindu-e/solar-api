@@ -1,0 +1,43 @@
+{
+  "name": "solar-api",
+  "version": "1.0.0",
+  "description": "NB6007CEM Real-Time Solar Generation Data API (Express + MongoDB)",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "db:indexes": "node src/db/scripts/sync-indexes.js",
+    "test": "jest --runInBand",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "mongoose": "^8.9.5",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "zod": "^3.24.1",
+    "helmet": "^8.0.0",
+    "cors": "^2.8.5",
+    "express-rate-limit": "^7.5.0",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.7.0",
+    "pino-http": "^10.3.0",
+    "dotenv": "^16.4.7",
+    "seedrandom": "^3.0.5"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0",
+    "mongodb-memory-server": "^10.1.2",
+    "nodemon": "^3.1.9",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2"
+  },
+  "allowScripts": {
+    "mongodb-memory-server@10.4.3": true,
+    "@scarf/scarf@1.4.0": true,
+    "fsevents@2.3.3": true
+  }
+}
