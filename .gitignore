@@ -3,6 +3,7 @@ node_modules/
 .env.*
 !.env.example
 atlas-credentials.env
+device-credentials.csv
 coverage/
 *.log
 .DS_Store

@@ -8,6 +8,9 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "db:indexes": "node src/db/scripts/sync-indexes.js",
+    "seed": "node src/db/scripts/seed.js",
+    "seed:verify": "node src/db/scripts/seed-verify.js",
+    "simulate": "node src/db/scripts/simulate.js",
     "test": "jest --runInBand",
     "lint": "eslint .",
     "format": "prettier --write ."
