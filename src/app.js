@@ -10,6 +10,7 @@ const requestId = require('./middleware/requestId');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
 const { ApiError } = require('./utils/errors');
+const apiRouter = require('./routes');
 
 const app = express();
 
@@ -41,6 +42,8 @@ app.get('/health', (req, res, next) => {
   }
   res.status(200).json({ status: 'ok' });
 });
+
+app.use('/api/v1', apiRouter);
 
 app.use(notFound);
 app.use(errorHandler);
