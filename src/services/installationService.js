@@ -34,4 +34,18 @@ function getInstallationById(id) {
   return SolarInstallation.findById(id);
 }
 
-module.exports = { listInstallations, getInstallationById, buildFilter, buildSort };
+// Resolves installation ids for a jurisdiction/filter combination, e.g. { substation_id } or
+// { district_id, substation_id }. Used by the aggregated readings endpoints (spec 5.3: "resolve
+// installation ids for the parent [and filter], then query readings with installation_id: { $in:
+// ids }"). filter is built entirely from already-validated path/query values, never raw input.
+function distinctInstallationIds(filter) {
+  return SolarInstallation.find(filter).distinct('_id');
+}
+
+module.exports = {
+  listInstallations,
+  getInstallationById,
+  distinctInstallationIds,
+  buildFilter,
+  buildSort,
+};

@@ -59,4 +59,27 @@ function parseObjectIdParam(value, fieldName) {
   return result.data;
 }
 
-module.exports = { objectIdSchema, buildQuerySchema, parseQuery, parseObjectIdParam };
+// Validates a JSON request body against a schema, or throws a 400 VALIDATION_ERROR with per-field
+// details. Used by the auth token endpoint and reading ingestion (spec 8.5: every body field must
+// be validated as a plain scalar, so an operator-object payload like {"email":{"$gt":""}} fails
+// type-checking here and never reaches a database query).
+function parseBody(schema, body) {
+  const result = schema.safeParse(body || {});
+  if (!result.success) {
+    const details = result.error.issues.map((issue) => ({
+      // "unrecognized_keys" issues (an extra/unknown field) carry the offending names in
+      // issue.keys rather than issue.path, so fall back to that before the generic '(body)'.
+      field:
+        issue.path.length > 0
+          ? issue.path.join('.')
+          : Array.isArray(issue.keys) && issue.keys.length > 0
+            ? issue.keys.join(',')
+            : '(body)',
+      issue: issue.message,
+    }));
+    throw ApiError.badRequest('Request validation failed.', details);
+  }
+  return result.data;
+}
+
+module.exports = { objectIdSchema, buildQuerySchema, parseQuery, parseObjectIdParam, parseBody };

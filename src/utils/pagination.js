@@ -72,4 +72,17 @@ async function paginate({ Model, filter, sort, page, pageSize, basePath, query }
   };
 }
 
-module.exports = { paginate, MAX_PAGE_SIZE };
+// Builds the same { data, pagination, links } envelope as paginate(), but with no database call
+// at all. Used when a scoped readings endpoint already knows (from a cheap id lookup) that there
+// is nothing to page through (e.g. a substation with zero installations) - spec 5.3 wants that
+// case to short-circuit rather than run a vacuous readings query.
+function emptyPage({ page, pageSize, basePath, query }) {
+  assertPageParams(page, pageSize);
+  return {
+    data: [],
+    pagination: { total: 0, page, page_size: pageSize, total_pages: 0 },
+    links: buildLinks(basePath, query, page, pageSize, 0),
+  };
+}
+
+module.exports = { paginate, emptyPage, MAX_PAGE_SIZE };
