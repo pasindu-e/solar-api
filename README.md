@@ -1,4 +1,4 @@
-# Solar API (NB6007CEM Real-Time Solar Generation Data API)
+# Solar API (NB6007CEM Real-Time Solar Generation Data API - COBSCCOMP251P-001)
 
 A backend-only JSON REST API for Sri Lanka Sustainable Energy Authority (SLSEA) style
 real-time solar generation data, built with Express 5 and MongoDB (Mongoose 8). It models a

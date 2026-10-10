@@ -1,27 +1,22 @@
-# OpenAPI 3.0 description of the entire NB6007CEM Real-Time Solar Generation Data API (spec
-# section 10). Hand-maintained, kept truthful against src/routes, src/controllers, src/services and
-# src/schemas - do not add an endpoint here that the code does not implement, and do not leave a
-# real one undocumented. Served at /openapi.json and rendered at /api-docs (see src/docs.js).
 openapi: 3.0.3
 
 info:
-  title: NB6007CEM Real-Time Solar Generation Data API
+  title: Real-Time Solar Generation Data API (COBSCCOMP251P-001)
   version: 1.0.0
   description: >
     A backend-only JSON API for Sri Lanka's solar generation monitoring hierarchy
     (Province -> District -> GridSubstation -> SolarInstallation -> GenerationReading).
     Metering devices authenticate per-installation and may only POST readings for their own
     installation; SLSEA users authenticate as a person and read within their jurisdiction
-    (national, province or district); an admin additionally manages the installation and
-    grid-substation registries. See docs/SPEC.md in the repository for the full design rationale.
+    (national, province or district);
 
 servers:
   # TODO (Phase 12, deployment): replace this with the live HTTPS URL, e.g.
   # https://solar-api.onrender.com. There is no deployment yet, so this is a local dev placeholder
   # only - do not submit the coursework with this still pointing at localhost (spec 10: "Set the
   # servers entry to the live HTTPS URL").
-  - url: http://localhost:3000
-    description: Local development (placeholder - update to the live HTTPS URL at deployment time)
+  - url: https://solar-api-heg6.onrender.com
+    description: Production
 
 tags:
   - name: Auth
