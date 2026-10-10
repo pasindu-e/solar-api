@@ -12,6 +12,7 @@ const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
 const { ApiError } = require('./utils/errors');
 const apiRouter = require('./routes');
+const docsRouter = require('./docs');
 
 const app = express();
 
@@ -23,6 +24,13 @@ app.set('query parser', 'simple');
 
 app.use(requestId);
 app.use(helmet());
+
+// Swagger UI (/api-docs) and the raw spec (/openapi.json) are public documentation (spec 10):
+// mounted before content negotiation/body parsing/auth so Swagger UI's own HTML/JS/CSS assets and
+// the raw JSON spec are never forced through the API's 406/415 content-negotiation rules or a
+// Bearer token requirement meant for the JSON API under /api/v1.
+app.use(docsRouter);
+
 // Content negotiation (406/415, spec 6.5, 8.4) runs BEFORE express.json() so a bad Content-Type
 // is rejected with a clean 415 before the body parser ever tries to read an unparseable body.
 app.use(negotiate);
