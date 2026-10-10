@@ -6,6 +6,7 @@
 const express = require('express');
 const authenticate = require('../middleware/authenticate');
 const requireScope = require('../middleware/requireScope');
+const methodNotAllowed = require('../middleware/methodNotAllowed');
 const controller = require('../controllers/provinceController');
 
 const router = express.Router();
@@ -17,5 +18,11 @@ router.get('/:provinceId', ...readAccess, controller.getProvince);
 // matching section 7's "unknown resource or route -> 404" (see provinceController.js).
 router.get('/:provinceId/districts', ...readAccess, controller.listDistrictsForProvince);
 router.get('/:provinceId/readings', ...readAccess, controller.listReadingsForProvince);
+
+// Extrapolation beyond spec's explicit prose (which only names the per-installation case): the
+// aggregated province readings collection has no POST, so its 405 Allow is just GET, HEAD.
+router.put('/:provinceId/readings', methodNotAllowed('GET, HEAD'));
+router.patch('/:provinceId/readings', methodNotAllowed('GET, HEAD'));
+router.delete('/:provinceId/readings', methodNotAllowed('GET, HEAD'));
 
 module.exports = router;

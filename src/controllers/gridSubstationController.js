@@ -3,8 +3,13 @@
 'use strict';
 
 const { ApiError } = require('../utils/errors');
-const { parseQuery, parseObjectIdParam } = require('../schemas/common');
+const { parseQuery, parseObjectIdParam, parseBody } = require('../schemas/common');
 const { gridSubstationQuerySchema } = require('../schemas/gridSubstationQuery');
+const {
+  substationCreateSchema,
+  substationReplaceSchema,
+  substationPatchSchema,
+} = require('../schemas/gridSubstationWrite');
 const { scopedInstallationQuerySchema } = require('../schemas/installationQuery');
 const { readingQuerySchema } = require('../schemas/readingQuery');
 const { sendAtomicConditional, sendHashConditional } = require('../utils/conditional');
@@ -122,9 +127,43 @@ async function listReadingsForSubstation(req, res) {
   sendHashConditional(req, res, { body: result, lastModified: newestRecordedAt(result.data) });
 }
 
+// POST /grid-substations (spec 5.3, admin/registry:write).
+async function createGridSubstation(req, res) {
+  const body = parseBody(substationCreateSchema, req.body);
+  const substation = await gridSubstationService.createGridSubstation(body);
+  res.status(201).set('Location', `/api/v1/grid-substations/${substation.id}`).json(substation);
+}
+
+// PUT /grid-substations/{id} (spec 5.3): full replacement, district_id immutable (400 if changed).
+async function replaceGridSubstation(req, res) {
+  const id = parseObjectIdParam(req.params.substationId, 'substationId');
+  const body = parseBody(substationReplaceSchema, req.body);
+  const updated = await gridSubstationService.replaceGridSubstation(id, body, req);
+  res.status(200).json(updated);
+}
+
+// PATCH /grid-substations/{id} (spec 5.3): partial update, same immutability rule.
+async function patchGridSubstation(req, res) {
+  const id = parseObjectIdParam(req.params.substationId, 'substationId');
+  const body = parseBody(substationPatchSchema, req.body);
+  const updated = await gridSubstationService.patchGridSubstation(id, body, req);
+  res.status(200).json(updated);
+}
+
+// DELETE /grid-substations/{id} (spec 5.3): 409 if installations exist, else 204 no body.
+async function deleteGridSubstation(req, res) {
+  const id = parseObjectIdParam(req.params.substationId, 'substationId');
+  await gridSubstationService.deleteGridSubstation(id);
+  res.status(204).end();
+}
+
 module.exports = {
   listGridSubstations,
   getGridSubstation,
   listInstallationsForSubstation,
   listReadingsForSubstation,
+  createGridSubstation,
+  replaceGridSubstation,
+  patchGridSubstation,
+  deleteGridSubstation,
 };

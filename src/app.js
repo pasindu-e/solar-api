@@ -7,6 +7,7 @@ const pinoHttp = require('pino-http');
 const mongoose = require('mongoose');
 
 const requestId = require('./middleware/requestId');
+const negotiate = require('./middleware/negotiate');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
 const { ApiError } = require('./utils/errors');
@@ -22,7 +23,13 @@ app.set('query parser', 'simple');
 
 app.use(requestId);
 app.use(helmet());
-app.use(express.json({ limit: '10kb' }));
+// Content negotiation (406/415, spec 6.5, 8.4) runs BEFORE express.json() so a bad Content-Type
+// is rejected with a clean 415 before the body parser ever tries to read an unparseable body.
+app.use(negotiate);
+// `type` accepts both application/json (every write) and application/merge-patch+json (PATCH
+// only, spec 6.5) so express.json() actually parses merge-patch bodies into req.body - by default
+// it only parses application/json.
+app.use(express.json({ limit: '10kb', type: ['application/json', 'application/merge-patch+json'] }));
 
 app.use(
   pinoHttp({
@@ -32,8 +39,8 @@ app.use(
   })
 );
 
-// Rate limiting, CORS, content negotiation (406/415) and auth middleware are added in later
-// phases, once there are routes that need them (see docs/SPEC.md section 8.4 for the full chain).
+// Rate limiting and CORS are added in later phases, once there are routes that need them (see
+// docs/SPEC.md section 8.4 for the full chain). Auth middleware is applied per-route.
 
 app.get('/health', (req, res, next) => {
   if (mongoose.connection.readyState !== 1) {

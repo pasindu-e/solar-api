@@ -8,6 +8,11 @@ const { parseQuery, parseObjectIdParam, parseBody } = require('../schemas/common
 const { installationQuerySchema } = require('../schemas/installationQuery');
 const { readingQuerySchema } = require('../schemas/readingQuery');
 const { readingIngestSchema } = require('../schemas/readingIngest');
+const {
+  installationCreateSchema,
+  installationReplaceSchema,
+  installationPatchSchema,
+} = require('../schemas/installationWrite');
 const { sendAtomicConditional, sendHashConditional } = require('../utils/conditional');
 const { newestRecordedAt } = require('../utils/readingFreshness');
 const {
@@ -250,6 +255,45 @@ async function postReading(req, res) {
     .json(reading);
 }
 
+// POST /installations (spec 5.3, admin/registry:write). The device secret is a judgment call (see
+// installationService.generateDeviceSecret): returned PLAINTEXT exactly once, under a field not in
+// the standard installation shape (device_secret), since this is the only way an admin can ever
+// hand a new device its credential.
+async function createInstallation(req, res) {
+  const body = parseBody(installationCreateSchema, req.body);
+  const { installation, deviceSecret } = await installationService.createInstallation(body);
+  const responseBody = installation.toJSON();
+  responseBody.device_secret = deviceSecret;
+  res
+    .status(201)
+    .set('Location', `/api/v1/installations/${installation.id}`)
+    .json(responseBody);
+}
+
+// PUT /installations/{id} (spec 5.3, 5.4): full replacement only. If-Match/412 and the atomic
+// version-filtered update happen in the service (spec 6.4).
+async function replaceInstallation(req, res) {
+  const id = parseObjectIdParam(req.params.installationId, 'installationId');
+  const body = parseBody(installationReplaceSchema, req.body);
+  const updated = await installationService.replaceInstallation(id, body, req);
+  res.status(200).json(updated);
+}
+
+// PATCH /installations/{id} (spec 5.3): JSON merge patch.
+async function patchInstallation(req, res) {
+  const id = parseObjectIdParam(req.params.installationId, 'installationId');
+  const body = parseBody(installationPatchSchema, req.body);
+  const updated = await installationService.patchInstallation(id, body, req);
+  res.status(200).json(updated);
+}
+
+// DELETE /installations/{id} (spec 5.3): 409 if readings exist, else 204 no body.
+async function deleteInstallation(req, res) {
+  const id = parseObjectIdParam(req.params.installationId, 'installationId');
+  await installationService.deleteInstallation(id);
+  res.status(204).end();
+}
+
 module.exports = {
   listInstallations,
   getInstallation,
@@ -258,4 +302,8 @@ module.exports = {
   getLastKnownReading,
   getOverview,
   postReading,
+  createInstallation,
+  replaceInstallation,
+  patchInstallation,
+  deleteInstallation,
 };

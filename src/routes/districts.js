@@ -5,6 +5,7 @@
 const express = require('express');
 const authenticate = require('../middleware/authenticate');
 const requireScope = require('../middleware/requireScope');
+const methodNotAllowed = require('../middleware/methodNotAllowed');
 const controller = require('../controllers/districtController');
 
 const router = express.Router();
@@ -14,5 +15,11 @@ router.get('/', ...readAccess, controller.listDistricts);
 router.get('/:districtId', ...readAccess, controller.getDistrict);
 router.get('/:districtId/grid-substations', ...readAccess, controller.listGridSubstationsForDistrict);
 router.get('/:districtId/readings', ...readAccess, controller.listReadingsForDistrict);
+
+// Extrapolation beyond spec's explicit prose (which only names the per-installation case): the
+// aggregated district readings collection has no POST, so its 405 Allow is just GET, HEAD.
+router.put('/:districtId/readings', methodNotAllowed('GET, HEAD'));
+router.patch('/:districtId/readings', methodNotAllowed('GET, HEAD'));
+router.delete('/:districtId/readings', methodNotAllowed('GET, HEAD'));
 
 module.exports = router;
