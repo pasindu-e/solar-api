@@ -103,6 +103,17 @@ describe('GET /api/v1/installations/:installationId/readings', () => {
     expect(res.status).toBe(400);
   });
 
+  // Phase 11 audit (spec section 11: "Sorting: ... invalid sort field gives 400"). Installations
+  // already had this case covered (tests/installations.test.js); readings did not - sort=timestamp
+  // is the only allowed value (src/schemas/readingQuery.js), so anything else must 400 too.
+  it('rejects an invalid sort field with 400', async () => {
+    const res = await auth(
+      request(app).get(`/api/v1/installations/${fixtures.instA._id}/readings?sort=power_kw`)
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
   it('400s for a malformed installation id', async () => {
     const res = await auth(request(app).get('/api/v1/installations/not-an-id/readings'));
     expect(res.status).toBe(400);

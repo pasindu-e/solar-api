@@ -1,0 +1,1415 @@
+# OpenAPI 3.0 description of the entire NB6007CEM Real-Time Solar Generation Data API (spec
+# section 10). Hand-maintained, kept truthful against src/routes, src/controllers, src/services and
+# src/schemas - do not add an endpoint here that the code does not implement, and do not leave a
+# real one undocumented. Served at /openapi.json and rendered at /api-docs (see src/docs.js).
+openapi: 3.0.3
+
+info:
+  title: NB6007CEM Real-Time Solar Generation Data API
+  version: 1.0.0
+  description: >
+    A backend-only JSON API for Sri Lanka's solar generation monitoring hierarchy
+    (Province -> District -> GridSubstation -> SolarInstallation -> GenerationReading).
+    Metering devices authenticate per-installation and may only POST readings for their own
+    installation; SLSEA users authenticate as a person and read within their jurisdiction
+    (national, province or district); an admin additionally manages the installation and
+    grid-substation registries. See docs/SPEC.md in the repository for the full design rationale.
+
+servers:
+  # TODO (Phase 12, deployment): replace this with the live HTTPS URL, e.g.
+  # https://solar-api.onrender.com. There is no deployment yet, so this is a local dev placeholder
+  # only - do not submit the coursework with this still pointing at localhost (spec 10: "Set the
+  # servers entry to the live HTTPS URL").
+  - url: http://localhost:3000
+    description: Local development (placeholder - update to the live HTTPS URL at deployment time)
+
+tags:
+  - name: Auth
+  - name: Provinces
+  - name: Districts
+  - name: Grid Substations
+  - name: Installations
+  - name: Readings
+  - name: Health
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------- Health (unauthenticated) -----
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness/readiness check
+      description: Unauthenticated. Checks `mongoose.connection.readyState === 1`.
+      security: []
+      responses:
+        '200':
+          description: Database connection is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        '503':
+          description: Database connection is not available.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: SERVICE_UNAVAILABLE
+                message: Database connection is not available.
+                details: []
+                status: 503
+                path: /health
+                timestamp: '2026-10-09T06:15:03Z'
+                request_id: b3c1c2e0-0000-0000-0000-000000000000
+
+  # ------------------------------------------------------------------------------------- Auth -----
+  /api/v1/auth/token:
+    post:
+      tags: [Auth]
+      summary: Issue a JWT (password or device grant)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/PasswordGrantRequest'
+                - $ref: '#/components/schemas/DeviceGrantRequest'
+              discriminator:
+                propertyName: grant_type
+                mapping:
+                  password: '#/components/schemas/PasswordGrantRequest'
+                  device: '#/components/schemas/DeviceGrantRequest'
+            examples:
+              password:
+                summary: User password grant
+                value: { grant_type: password, email: district.colombo@slsea.demo, password: demo-pass }
+              device:
+                summary: Device grant
+                value: { grant_type: device, meter_id: SL-MTR-000001, device_secret: demo-secret-SL-MTR-000001 }
+      responses:
+        '200':
+          description: Token issued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+              example:
+                access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                token_type: Bearer
+                expires_in: 3600
+                scope: data:read
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Invalid credentials (same generic error for wrong email, wrong password, unknown meter_id, wrong device secret, or an inactive installation - no user/device enumeration).
+          headers: { WWW-Authenticate: { $ref: '#/components/headers/WWWAuthenticate' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429':
+          description: Too many token requests from this IP (rate limited).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  # --------------------------------------------------------------------------------- Provinces ----
+  /api/v1/provinces:
+    get:
+      tags: [Provinces]
+      summary: List provinces (jurisdiction-trimmed, paginated)
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/ProvinceCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/provinces/{provinceId}:
+    get:
+      tags: [Provinces]
+      summary: Get one province
+      parameters:
+        - $ref: '#/components/parameters/ProvinceId'
+      responses:
+        '200': { $ref: '#/components/responses/ProvinceAtomic' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/provinces/{provinceId}/districts:
+    get:
+      tags: [Provinces, Districts]
+      summary: List districts in a province (scoped collection)
+      parameters:
+        - $ref: '#/components/parameters/ProvinceId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/DistrictCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/provinces/{provinceId}/readings:
+    get:
+      tags: [Provinces, Readings]
+      summary: Readings across every installation in a province
+      description: >
+        Defaults to the last 24 hours when neither `from` nor `to` is given. `district_id` and
+        `substation_id` are narrowing filters that must belong to the path province.
+      parameters:
+        - $ref: '#/components/parameters/ProvinceId'
+        - $ref: '#/components/parameters/DistrictIdFilter'
+        - $ref: '#/components/parameters/SubstationIdFilter'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/ReadingSort'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/ReadingCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put: &aggReadings405
+      tags: [Readings]
+      summary: Not allowed (aggregated readings collections are read-only)
+      security: []
+      responses:
+        '405':
+          description: Method not allowed.
+          headers: { Allow: { $ref: '#/components/headers/Allow' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch: *aggReadings405
+    delete: *aggReadings405
+
+  # ---------------------------------------------------------------------------------- Districts ---
+  /api/v1/districts:
+    get:
+      tags: [Districts]
+      summary: List districts (optional province_id filter)
+      parameters:
+        - $ref: '#/components/parameters/ProvinceIdFilter'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/DistrictCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/districts/{districtId}:
+    get:
+      tags: [Districts]
+      summary: Get one district
+      parameters:
+        - $ref: '#/components/parameters/DistrictId'
+      responses:
+        '200': { $ref: '#/components/responses/DistrictAtomic' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/districts/{districtId}/grid-substations:
+    get:
+      tags: [Districts, Grid Substations]
+      summary: List grid substations in a district (scoped collection)
+      parameters:
+        - $ref: '#/components/parameters/DistrictId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/GridSubstationCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/districts/{districtId}/readings:
+    get:
+      tags: [Districts, Readings]
+      summary: Readings across every installation in a district
+      description: >
+        Defaults to the last 24 hours when neither `from` nor `to` is given. `substation_id` is a
+        narrowing filter that must belong to the path district.
+      parameters:
+        - $ref: '#/components/parameters/DistrictId'
+        - $ref: '#/components/parameters/SubstationIdFilter'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/ReadingSort'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/ReadingCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put: *aggReadings405
+    patch: *aggReadings405
+    delete: *aggReadings405
+
+  /api/v1/districts/{districtId}/generation-summary:
+    get:
+      tags: [Districts]
+      summary: District generation summary (processing/derived resource)
+      description: >
+        "current" = latest reading per installation within the last 30 minutes. "Today" = since
+        local midnight Asia/Colombo, clamped at 0 per installation. `as_of` is the newest
+        `recorded_at` used in the calculation (never wall-clock time), or null if there is no
+        reading today. A district with no readings today returns 200 with zero totals.
+      parameters:
+        - $ref: '#/components/parameters/DistrictId'
+      responses:
+        '200':
+          description: Generation summary.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Last-Modified: { $ref: '#/components/headers/LastModified' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DistrictGenerationSummary' }
+              example:
+                district_id: 6650f1c2a1b2c3d4e5f60001
+                district_name: Colombo
+                as_of: '2026-10-09T06:00:00Z'
+                timezone: Asia/Colombo
+                installation_count: 18
+                reporting_installation_count: 17
+                current_power_kw: 41.372
+                today_energy_kwh: 126.905
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put: &derived405
+      tags: [Districts]
+      summary: Not allowed (a derived snapshot is read-only)
+      security: []
+      responses:
+        '405':
+          description: Method not allowed.
+          headers: { Allow: { $ref: '#/components/headers/Allow' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch: *derived405
+    delete: *derived405
+
+  # ----------------------------------------------------------------------------- Grid Substations -
+  /api/v1/grid-substations:
+    get:
+      tags: [Grid Substations]
+      summary: List grid substations (optional district_id/province_id filters)
+      parameters:
+        - $ref: '#/components/parameters/DistrictIdFilter'
+        - $ref: '#/components/parameters/ProvinceIdFilter'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/GridSubstationCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [Grid Substations]
+      summary: Create a grid substation (admin, registry:write)
+      description: district_id must refer to an existing district (400 if not); province_id is server-derived.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GridSubstationCreateRequest' }
+            example: { district_id: 6650f1c2a1b2c3d4e5f60001, name: New Town GSS, capacity_mva: 10 }
+      responses:
+        '201':
+          description: Created.
+          headers: { Location: { $ref: '#/components/headers/Location' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridSubstation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/grid-substations/{substationId}:
+    get:
+      tags: [Grid Substations]
+      summary: Get one grid substation
+      parameters:
+        - $ref: '#/components/parameters/SubstationId'
+      responses:
+        '200': { $ref: '#/components/responses/GridSubstationAtomic' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [Grid Substations]
+      summary: Full replace a grid substation (admin, registry:write)
+      description: Full replacement. district_id is immutable (400 if it differs from the current value).
+      parameters:
+        - $ref: '#/components/parameters/SubstationId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GridSubstationReplaceRequest' }
+      responses:
+        '200':
+          description: Replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridSubstation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [Grid Substations]
+      summary: Partially update a grid substation (admin, registry:write)
+      description: JSON merge patch. Accepts application/json or application/merge-patch+json. Same district_id immutability rule.
+      parameters:
+        - $ref: '#/components/parameters/SubstationId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GridSubstationPatchRequest' }
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/GridSubstationPatchRequest' }
+      responses:
+        '200':
+          description: Patched.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridSubstation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [Grid Substations]
+      summary: Delete a grid substation (admin, registry:write)
+      description: 409 GRID_SUBSTATION_HAS_INSTALLATIONS if any installation still references it.
+      parameters:
+        - $ref: '#/components/parameters/SubstationId'
+      responses:
+        '204': { description: Deleted. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/grid-substations/{substationId}/installations:
+    get:
+      tags: [Grid Substations, Installations]
+      summary: List installations under a grid substation (scoped collection)
+      parameters:
+        - $ref: '#/components/parameters/SubstationId'
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/InstallationSort'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/InstallationCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/grid-substations/{substationId}/readings:
+    get:
+      tags: [Grid Substations, Readings]
+      summary: Readings across every installation of a grid substation
+      description: Defaults to the last 24 hours when neither `from` nor `to` is given.
+      parameters:
+        - $ref: '#/components/parameters/SubstationId'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/ReadingSort'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/ReadingCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put: *aggReadings405
+    patch: *aggReadings405
+    delete: *aggReadings405
+
+  # ------------------------------------------------------------------------------- Installations --
+  /api/v1/installations:
+    get:
+      tags: [Installations]
+      summary: List installations (jurisdiction filters, status, sort, pagination)
+      parameters:
+        - $ref: '#/components/parameters/ProvinceIdFilter'
+        - $ref: '#/components/parameters/DistrictIdFilter'
+        - $ref: '#/components/parameters/SubstationIdFilter'
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/InstallationSort'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/InstallationCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [Installations]
+      summary: Create an installation (admin, registry:write)
+      description: >
+        Server derives district_id/province_id from substation_id (400 if the substation does not
+        exist). The response includes a one-time plaintext `device_secret` for provisioning the
+        metering device - it is never returned again afterwards.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstallationCreateRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers: { Location: { $ref: '#/components/headers/Location' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InstallationCreated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/installations/{installationId}:
+    get:
+      tags: [Installations]
+      summary: Get one installation
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+      responses:
+        '200': { $ref: '#/components/responses/InstallationAtomic' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [Installations]
+      summary: Full replace an installation (admin, registry:write)
+      description: Full replacement only; all writable fields required. Always recomputes district_id/province_id from substation_id.
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstallationReplaceRequest' }
+      responses:
+        '200':
+          description: Replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolarInstallation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [Installations]
+      summary: Partially update an installation (admin, registry:write)
+      description: JSON merge patch (RFC 7396). Accepts application/json or application/merge-patch+json. Only recomputes district_id/province_id when substation_id is present in the patch.
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstallationPatchRequest' }
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/InstallationPatchRequest' }
+      responses:
+        '200':
+          description: Patched.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolarInstallation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [Installations]
+      summary: Delete an installation (admin, registry:write)
+      description: 409 INSTALLATION_HAS_READINGS if any reading exists. Prefer PATCH status=decommissioned instead.
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+      responses:
+        '204': { description: Deleted. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/installations/{installationId}/overview:
+    get:
+      tags: [Installations]
+      summary: Composite installation overview
+      description: >
+        Installation plus substation, district, province, last known reading and reading
+        count/first-reading-time, built from a bounded set of queries (never a per-field loop).
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+      responses:
+        '200':
+          description: Overview.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Last-Modified: { $ref: '#/components/headers/LastModified' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InstallationOverview' }
+              example:
+                installation: { id: 6650f1c2a1b2c3d4e5f60042, meter_id: SL-MTR-000042, capacity_kw: 5.5, status: active }
+                substation: { id: 6650f1c2a1b2c3d4e5f60007, name: Kotte GSS }
+                district: { id: 6650f1c2a1b2c3d4e5f60001, name: Colombo }
+                province: { id: 6650f1c2a1b2c3d4e5f60000, name: Western }
+                last_known_reading: { id: 6650f1c2a1b2c3d4e5f6a123, recorded_at: '2026-10-09T06:00:00Z', power_kw: 3.214, energy_kwh: 4521.88, voltage_v: 231.4 }
+                reading_summary: { total_readings: 672, first_recorded_at: '2026-10-02T06:15:00Z' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/installations/{installationId}/last-known-reading:
+    get:
+      tags: [Installations, Readings]
+      summary: The newest reading for an installation (derived, operational view)
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+      responses:
+        '200': { $ref: '#/components/responses/ReadingAtomic' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Installation not found, or NO_READINGS if the installation has never reported.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/installations/{installationId}/readings:
+    get:
+      tags: [Installations, Readings]
+      summary: Paginated reading history for one installation (canonical scoped collection)
+      description: Returns the installation's full reading history (paginated) when no from/to is given - no 24h default here (that default applies only to the three aggregated collections above).
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/ReadingSort'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/ReadingCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [Installations, Readings]
+      summary: Ingest a reading (device token, its own installation only)
+      description: >
+        The installation comes only from the path - a body containing `installation_id` (or any
+        other unknown field) is rejected with 400. The device token's `installation_id` claim must
+        equal the path id (403 FORBIDDEN otherwise). The installation must exist (404) and be
+        `active` (403 INSTALLATION_NOT_ACTIVE). `recorded_at` more than 5 minutes ahead of server
+        time is 400; past/out-of-order timestamps are accepted. Duplicate (installation_id,
+        recorded_at) is 409 DUPLICATE_READING. The returned Location URL resolves for user tokens
+        only - the device itself has no read scope.
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReadingIngestRequest' }
+            example: { recorded_at: '2026-10-09T06:30:00Z', power_kw: 2.4, energy_kwh: 4530.1, voltage_v: 231.2 }
+      responses:
+        '201':
+          description: Reading stored.
+          headers: { Location: { $ref: '#/components/headers/Location' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationReading' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: Wrong installation for this device token, or the installation is not active (INSTALLATION_NOT_ACTIVE).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put: &instReadings405
+      tags: [Readings]
+      summary: Not allowed (the per-installation readings collection only supports GET, HEAD, POST)
+      security: []
+      responses:
+        '405':
+          description: Method not allowed.
+          headers: { Allow: { $ref: '#/components/headers/Allow' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch: *instReadings405
+    delete: *instReadings405
+
+  /api/v1/installations/{installationId}/readings/{readingId}:
+    get:
+      tags: [Installations, Readings]
+      summary: Get one reading
+      description: 404 if the reading exists but belongs to a different installation than the one in the path.
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+        - $ref: '#/components/parameters/ReadingId'
+      responses:
+        '200': { $ref: '#/components/responses/ReadingAtomic' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '406': { $ref: '#/components/responses/NotAcceptable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put: &readingAtomic405
+      tags: [Readings]
+      summary: Not allowed (a reading is append-only and immutable)
+      security: []
+      responses:
+        '405':
+          description: Method not allowed.
+          headers: { Allow: { $ref: '#/components/headers/Allow' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch: *readingAtomic405
+    delete: *readingAtomic405
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  # ---------------------------------------------------------------------------- Shared headers ----
+  headers:
+    Location:
+      description: URL of the newly created resource.
+      schema: { type: string }
+      example: /api/v1/installations/6650f1c2a1b2c3d4e5f60042/readings/6650f1c2a1b2c3d4e5f6a123
+    ETag:
+      description: Opaque validator for conditional GET (If-None-Match) and conditional writes (If-Match).
+      schema: { type: string }
+      example: '"inst-6650f1c2a1b2c3d4e5f60042-v3"'
+    LastModified:
+      description: HTTP-date of when this representation last changed.
+      schema: { type: string }
+      example: 'Thu, 09 Oct 2026 06:15:00 GMT'
+    Allow:
+      description: The methods actually allowed on this resource.
+      schema: { type: string }
+      example: 'GET, HEAD'
+    WWWAuthenticate:
+      description: Present on every 401.
+      schema: { type: string }
+      example: Bearer
+
+  # ------------------------------------------------------------------------- Shared parameters ----
+  parameters:
+    Page:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, default: 1 }
+      description: 1-based page number.
+    PageSize:
+      name: page_size
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      description: Page size, capped at 500.
+    From:
+      name: from
+      in: query
+      required: false
+      schema: { type: string, format: date-time }
+      description: Inclusive lower bound on recorded_at (ISO 8601 UTC).
+    To:
+      name: to
+      in: query
+      required: false
+      schema: { type: string, format: date-time }
+      description: Inclusive upper bound on recorded_at (ISO 8601 UTC). 400 if from > to.
+    ReadingSort:
+      name: sort
+      in: query
+      required: false
+      schema: { type: string, enum: [timestamp] }
+      description: Public sort name, mapped internally to the stored field recorded_at.
+    InstallationSort:
+      name: sort
+      in: query
+      required: false
+      schema: { type: string, enum: [meter_id, capacity_kw, created_at] }
+    Order:
+      name: order
+      in: query
+      required: false
+      schema: { type: string, enum: [asc, desc] }
+      description: Default is desc for readings, asc for installations.
+    StatusFilter:
+      name: status
+      in: query
+      required: false
+      schema: { type: string, enum: [active, inactive, decommissioned] }
+    ProvinceIdFilter:
+      name: province_id
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/ObjectId' }
+      description: Narrowing filter; can only narrow the token's own jurisdiction, never widen it (403 if out of scope).
+    DistrictIdFilter:
+      name: district_id
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/ObjectId' }
+      description: Narrowing filter; must belong to the path parent where one exists (400 if not), and to the token's jurisdiction (403 if not).
+    SubstationIdFilter:
+      name: substation_id
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/ObjectId' }
+      description: Narrowing filter; must belong to the path parent where one exists (400 if not), and to the token's jurisdiction (403 if not).
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      schema: { type: string }
+      description: If supplied and it does not match the current ETag, the write is rejected with 412.
+    ProvinceId:
+      name: provinceId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ObjectId' }
+    DistrictId:
+      name: districtId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ObjectId' }
+    SubstationId:
+      name: substationId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ObjectId' }
+    InstallationId:
+      name: installationId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ObjectId' }
+    ReadingId:
+      name: readingId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ObjectId' }
+
+  # ----------------------------------------------------------------------------- Shared responses -
+  responses:
+    BadRequest:
+      description: Malformed or invalid input.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthenticated:
+      description: Missing, expired or invalid token.
+      headers: { WWW-Authenticate: { $ref: '#/components/headers/WWWAuthenticate' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Valid token but wrong scope, wrong installation, inactive installation, or out of jurisdiction.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Unknown resource or route.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Duplicate reading or meter id, or delete of a resource that still has children.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PreconditionFailed:
+      description: If-Match precondition failed (stale ETag).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotAcceptable:
+      description: Accept header cannot be satisfied with application/json.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnsupportedMediaType:
+      description: Wrong request Content-Type.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: Unexpected failure.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: >
+        Too many requests from this IP (spec 8.5: general per-IP rate limiting on every /api/v1
+        route, on top of the stricter limiter on POST /api/v1/auth/token).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotModified:
+      description: The client's cached copy (If-None-Match/If-Modified-Since) is still current. Empty body; ETag is still sent.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        Last-Modified: { $ref: '#/components/headers/LastModified' }
+
+    ProvinceCollection:
+      description: Paginated province list.
+      headers: { ETag: { $ref: '#/components/headers/ETag' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProvinceCollectionEnvelope' }
+    ProvinceAtomic:
+      description: One province.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        Last-Modified: { $ref: '#/components/headers/LastModified' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Province' }
+    DistrictCollection:
+      description: Paginated district list.
+      headers: { ETag: { $ref: '#/components/headers/ETag' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DistrictCollectionEnvelope' }
+    DistrictAtomic:
+      description: One district.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        Last-Modified: { $ref: '#/components/headers/LastModified' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/District' }
+    GridSubstationCollection:
+      description: Paginated grid substation list.
+      headers: { ETag: { $ref: '#/components/headers/ETag' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/GridSubstationCollectionEnvelope' }
+    GridSubstationAtomic:
+      description: One grid substation.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        Last-Modified: { $ref: '#/components/headers/LastModified' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/GridSubstation' }
+    InstallationCollection:
+      description: Paginated installation list.
+      headers: { ETag: { $ref: '#/components/headers/ETag' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/InstallationCollectionEnvelope' }
+    InstallationAtomic:
+      description: One installation.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        Last-Modified: { $ref: '#/components/headers/LastModified' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/SolarInstallation' }
+          example:
+            id: 6650f1c2a1b2c3d4e5f60042
+            meter_id: SL-MTR-000042
+            owner_name: A. Perera
+            capacity_kw: 5.5
+            status: active
+            latitude: 6.9271
+            longitude: 79.8612
+            installed_at: '2025-03-14'
+            substation_id: 6650f1c2a1b2c3d4e5f60007
+            district_id: 6650f1c2a1b2c3d4e5f60001
+            province_id: 6650f1c2a1b2c3d4e5f60000
+            version: 3
+            created_at: '2026-10-01T04:00:00Z'
+            updated_at: '2026-10-01T04:00:00Z'
+    ReadingCollection:
+      description: Paginated reading list.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        Last-Modified: { $ref: '#/components/headers/LastModified' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ReadingCollectionEnvelope' }
+    ReadingAtomic:
+      description: One reading.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        Last-Modified: { $ref: '#/components/headers/LastModified' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/GenerationReading' }
+
+  schemas:
+    ObjectId:
+      type: string
+      pattern: '^[0-9a-f]{24}$'
+      example: 6650f1c2a1b2c3d4e5f60042
+
+    Error:
+      type: object
+      required: [code, message, details, status, path, timestamp, request_id]
+      properties:
+        code: { type: string, example: VALIDATION_ERROR }
+        message: { type: string, example: Request validation failed. }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string, example: power_kw }
+              issue: { type: string, example: must be a number greater than or equal to 0 }
+        status: { type: integer, example: 400 }
+        path: { type: string, example: /api/v1/installations/6650f1c2a1b2c3d4e5f60042/readings }
+        timestamp: { type: string, format: date-time, example: '2026-10-09T06:15:03Z' }
+        request_id: { type: string, nullable: true, example: b3c1c2e0-0000-0000-0000-000000000000 }
+      description: >
+        The one error shape used by every client/server error in this API. Stable `code` values
+        actually reachable in this codebase: VALIDATION_ERROR, UNAUTHENTICATED, INVALID_TOKEN,
+        FORBIDDEN, OUT_OF_JURISDICTION, NOT_FOUND, NO_READINGS, METHOD_NOT_ALLOWED, NOT_ACCEPTABLE,
+        UNSUPPORTED_MEDIA_TYPE, DUPLICATE_READING, DUPLICATE_KEY (generic unique-index fallback,
+        e.g. duplicate meter_id), INSTALLATION_HAS_READINGS, GRID_SUBSTATION_HAS_INSTALLATIONS,
+        INSTALLATION_NOT_ACTIVE, PRECONDITION_FAILED, RATE_LIMITED, SERVICE_UNAVAILABLE (GET
+        /health only), INTERNAL_ERROR.
+
+    Pagination:
+      type: object
+      properties:
+        total: { type: integer, example: 672 }
+        page: { type: integer, example: 2 }
+        page_size: { type: integer, example: 50 }
+        total_pages: { type: integer, example: 14 }
+
+    Links:
+      type: object
+      properties:
+        self: { type: string }
+        first: { type: string }
+        prev: { type: string, nullable: true }
+        next: { type: string, nullable: true }
+        last: { type: string }
+      example:
+        self: /api/v1/installations/6650f1c2a1b2c3d4e5f60042/readings?page=2&page_size=50
+        first: /api/v1/installations/6650f1c2a1b2c3d4e5f60042/readings?page=1&page_size=50
+        prev: /api/v1/installations/6650f1c2a1b2c3d4e5f60042/readings?page=1&page_size=50
+        next: /api/v1/installations/6650f1c2a1b2c3d4e5f60042/readings?page=3&page_size=50
+        last: /api/v1/installations/6650f1c2a1b2c3d4e5f60042/readings?page=14&page_size=50
+
+    Province:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/ObjectId' }
+        code: { type: string, example: WP }
+        name: { type: string, example: Western }
+        version: { type: integer, example: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    District:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/ObjectId' }
+        province_id: { $ref: '#/components/schemas/ObjectId' }
+        name: { type: string, example: Colombo }
+        version: { type: integer, example: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GridSubstation:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/ObjectId' }
+        district_id: { $ref: '#/components/schemas/ObjectId' }
+        province_id: { $ref: '#/components/schemas/ObjectId' }
+        name: { type: string, example: Kotte GSS }
+        capacity_mva: { type: number, nullable: true, example: 20 }
+        version: { type: integer, example: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SolarInstallation:
+      type: object
+      description: device_secret_hash is never part of the API's response surface (select:false on the model, stripped in toJSON).
+      properties:
+        id: { $ref: '#/components/schemas/ObjectId' }
+        meter_id: { type: string, example: SL-MTR-000042 }
+        owner_name: { type: string, nullable: true, example: A. Perera }
+        capacity_kw: { type: number, example: 5.5 }
+        status: { type: string, enum: [active, inactive, decommissioned] }
+        latitude: { type: number, nullable: true, example: 6.9271 }
+        longitude: { type: number, nullable: true, example: 79.8612 }
+        installed_at: { type: string, format: date, nullable: true, example: '2025-03-14' }
+        substation_id: { $ref: '#/components/schemas/ObjectId' }
+        district_id: { $ref: '#/components/schemas/ObjectId' }
+        province_id: { $ref: '#/components/schemas/ObjectId' }
+        version: { type: integer, example: 3 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    InstallationCreated:
+      allOf:
+        - $ref: '#/components/schemas/SolarInstallation'
+        - type: object
+          properties:
+            device_secret:
+              type: string
+              description: Plaintext device credential, returned exactly once on create.
+              example: 7f3a9c1e2b4d5f607182930a4b5c6d7e8f901234ab5c6d7e
+
+    GenerationReading:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/ObjectId' }
+        installation_id: { $ref: '#/components/schemas/ObjectId' }
+        recorded_at: { type: string, format: date-time, example: '2026-10-09T06:00:00Z' }
+        power_kw: { type: number, example: 3.214 }
+        energy_kwh: { type: number, example: 4521.88 }
+        voltage_v: { type: number, example: 231.4 }
+        ingested_at: { type: string, format: date-time }
+
+    InstallationOverview:
+      type: object
+      properties:
+        installation:
+          type: object
+          properties:
+            id: { $ref: '#/components/schemas/ObjectId' }
+            meter_id: { type: string }
+            capacity_kw: { type: number }
+            status: { type: string }
+        substation:
+          type: object
+          nullable: true
+          properties: { id: { $ref: '#/components/schemas/ObjectId' }, name: { type: string } }
+        district:
+          type: object
+          nullable: true
+          properties: { id: { $ref: '#/components/schemas/ObjectId' }, name: { type: string } }
+        province:
+          type: object
+          nullable: true
+          properties: { id: { $ref: '#/components/schemas/ObjectId' }, name: { type: string } }
+        last_known_reading:
+          allOf: [{ $ref: '#/components/schemas/GenerationReading' }]
+          nullable: true
+        reading_summary:
+          type: object
+          properties:
+            total_readings: { type: integer, example: 672 }
+            first_recorded_at: { type: string, format: date-time, nullable: true }
+
+    DistrictGenerationSummary:
+      type: object
+      properties:
+        district_id: { $ref: '#/components/schemas/ObjectId' }
+        district_name: { type: string, example: Colombo }
+        as_of: { type: string, format: date-time, nullable: true, description: Newest recorded_at used in the calculation; null if no reading today. }
+        timezone: { type: string, example: Asia/Colombo }
+        installation_count: { type: integer, example: 18 }
+        reporting_installation_count: { type: integer, example: 17 }
+        current_power_kw: { type: number, example: 41.372 }
+        today_energy_kwh: { type: number, example: 126.905 }
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, example: Bearer }
+        expires_in: { type: integer, example: 3600, description: Seconds until expiry. }
+        scope: { type: string, example: data:read }
+
+    PasswordGrantRequest:
+      type: object
+      required: [grant_type, email, password]
+      properties:
+        grant_type: { type: string, enum: [password] }
+        email: { type: string, format: email }
+        password: { type: string }
+
+    DeviceGrantRequest:
+      type: object
+      required: [grant_type, meter_id, device_secret]
+      properties:
+        grant_type: { type: string, enum: [device] }
+        meter_id: { type: string, example: SL-MTR-000001 }
+        device_secret: { type: string }
+
+    ReadingIngestRequest:
+      type: object
+      required: [recorded_at, power_kw, energy_kwh, voltage_v]
+      description: .strict() - any extra field, including installation_id, is rejected with 400.
+      properties:
+        recorded_at: { type: string, format: date-time, description: 'Must not be more than 5 minutes ahead of server time.' }
+        power_kw: { type: number, minimum: 0 }
+        energy_kwh: { type: number, minimum: 0 }
+        voltage_v: { type: number, exclusiveMinimum: 0, maximum: 500 }
+
+    InstallationCreateRequest:
+      type: object
+      required: [substation_id, capacity_kw, meter_id]
+      properties:
+        substation_id: { $ref: '#/components/schemas/ObjectId' }
+        meter_id: { type: string }
+        owner_name: { type: string, nullable: true }
+        capacity_kw: { type: number, minimum: 0.1 }
+        status: { type: string, enum: [active, inactive, decommissioned], default: active }
+        latitude: { type: number, nullable: true }
+        longitude: { type: number, nullable: true }
+        installed_at: { type: string, format: date, nullable: true }
+
+    InstallationReplaceRequest:
+      type: object
+      description: Full replacement - every writable field is required.
+      required: [substation_id, meter_id, owner_name, capacity_kw, status, latitude, longitude, installed_at]
+      properties:
+        substation_id: { $ref: '#/components/schemas/ObjectId' }
+        meter_id: { type: string }
+        owner_name: { type: string, nullable: true }
+        capacity_kw: { type: number, minimum: 0.1 }
+        status: { type: string, enum: [active, inactive, decommissioned] }
+        latitude: { type: number, nullable: true }
+        longitude: { type: number, nullable: true }
+        installed_at: { type: string, format: date, nullable: true }
+
+    InstallationPatchRequest:
+      type: object
+      description: JSON merge patch - every field optional; an explicit null deletes a nullable field.
+      properties:
+        substation_id: { $ref: '#/components/schemas/ObjectId' }
+        meter_id: { type: string }
+        owner_name: { type: string, nullable: true }
+        capacity_kw: { type: number, minimum: 0.1 }
+        status: { type: string, enum: [active, inactive, decommissioned] }
+        latitude: { type: number, nullable: true }
+        longitude: { type: number, nullable: true }
+        installed_at: { type: string, format: date, nullable: true }
+
+    GridSubstationCreateRequest:
+      type: object
+      required: [district_id, name]
+      properties:
+        district_id: { $ref: '#/components/schemas/ObjectId' }
+        name: { type: string }
+        capacity_mva: { type: number, exclusiveMinimum: 0, nullable: true }
+
+    GridSubstationReplaceRequest:
+      type: object
+      description: Full replacement. district_id must equal the current value (immutable) - 400 if it differs.
+      required: [district_id, name, capacity_mva]
+      properties:
+        district_id: { $ref: '#/components/schemas/ObjectId' }
+        name: { type: string }
+        capacity_mva: { type: number, exclusiveMinimum: 0, nullable: true }
+
+    GridSubstationPatchRequest:
+      type: object
+      description: JSON merge patch. district_id, if present, must equal the current value.
+      properties:
+        district_id: { $ref: '#/components/schemas/ObjectId' }
+        name: { type: string }
+        capacity_mva: { type: number, exclusiveMinimum: 0, nullable: true }
+
+    ProvinceCollectionEnvelope:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Province' } }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        links: { $ref: '#/components/schemas/Links' }
+
+    DistrictCollectionEnvelope:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/District' } }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        links: { $ref: '#/components/schemas/Links' }
+
+    GridSubstationCollectionEnvelope:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/GridSubstation' } }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        links: { $ref: '#/components/schemas/Links' }
+
+    InstallationCollectionEnvelope:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/SolarInstallation' } }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        links: { $ref: '#/components/schemas/Links' }
+
+    ReadingCollectionEnvelope:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/GenerationReading' } }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        links: { $ref: '#/components/schemas/Links' }

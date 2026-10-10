@@ -7,6 +7,8 @@ const pinoHttp = require('pino-http');
 const mongoose = require('mongoose');
 
 const requestId = require('./middleware/requestId');
+const httpsRedirect = require('./middleware/httpsRedirect');
+const apiRateLimit = require('./middleware/apiRateLimit');
 const negotiate = require('./middleware/negotiate');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
@@ -23,6 +25,9 @@ app.set('trust proxy', 1);
 app.set('query parser', 'simple');
 
 app.use(requestId);
+// Spec 8.5: "redirect plain HTTP when x-forwarded-proto is http." Runs before everything else so
+// a plain-HTTP request never reaches auth, docs or the API at all.
+app.use(httpsRedirect);
 app.use(helmet());
 
 // Swagger UI (/api-docs) and the raw spec (/openapi.json) are public documentation (spec 10):
@@ -47,8 +52,8 @@ app.use(
   })
 );
 
-// Rate limiting and CORS are added in later phases, once there are routes that need them (see
-// docs/SPEC.md section 8.4 for the full chain). Auth middleware is applied per-route.
+// CORS is deliberately left off (spec 8.5: "CORS restricted or off - no browser client is
+// required" for this backend-only API). Auth middleware is applied per-route.
 
 app.get('/health', (req, res, next) => {
   if (mongoose.connection.readyState !== 1) {
@@ -58,7 +63,11 @@ app.get('/health', (req, res, next) => {
   res.status(200).json({ status: 'ok' });
 });
 
-app.use('/api/v1', apiRouter);
+// Phase 11 audit fix: spec 8.5 asks for a rate limit on /auth/token (already present, src/routes/
+// auth.js) AND "the API generally" - only the first half existed before this phase. Applied to the
+// whole /api/v1 router, not to /health or the public docs, so liveness checks and Swagger UI are
+// never affected by API traffic.
+app.use('/api/v1', apiRateLimit, apiRouter);
 
 app.use(notFound);
 app.use(errorHandler);

@@ -279,6 +279,18 @@ describe('spec 8.7: Device ingestion scope and ownership', () => {
     expect(res.status).toBe(400);
   });
 
+  // Phase 11 audit (spec section 11: "negative power (400)"). The zod schema already rejects
+  // power_kw < 0 (src/schemas/readingIngest.js), but no test exercised it end to end - gap closed.
+  it('rejects a negative power_kw with 400', async () => {
+    const token = deviceToken(authFx.activeInstallation._id);
+    const res = await request(app)
+      .post(`/api/v1/installations/${authFx.activeInstallation._id}/readings`)
+      .set('Authorization', bearer(token))
+      .send({ recorded_at: new Date().toISOString(), power_kw: -1, energy_kwh: 1, voltage_v: 230 });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
   it('rejects a recorded_at more than 5 minutes in the future with 400', async () => {
     const token = deviceToken(authFx.activeInstallation._id);
     const future = new Date(Date.now() + 10 * 60 * 1000).toISOString();
