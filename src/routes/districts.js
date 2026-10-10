@@ -15,11 +15,17 @@ router.get('/', ...readAccess, controller.listDistricts);
 router.get('/:districtId', ...readAccess, controller.getDistrict);
 router.get('/:districtId/grid-substations', ...readAccess, controller.listGridSubstationsForDistrict);
 router.get('/:districtId/readings', ...readAccess, controller.listReadingsForDistrict);
+router.get('/:districtId/generation-summary', ...readAccess, controller.getGenerationSummary);
 
 // Extrapolation beyond spec's explicit prose (which only names the per-installation case): the
 // aggregated district readings collection has no POST, so its 405 Allow is just GET, HEAD.
 router.put('/:districtId/readings', methodNotAllowed('GET, HEAD'));
 router.patch('/:districtId/readings', methodNotAllowed('GET, HEAD'));
 router.delete('/:districtId/readings', methodNotAllowed('GET, HEAD'));
+
+// generation-summary is a read-only derived snapshot, same reasoning as the readings collection.
+router.put('/:districtId/generation-summary', methodNotAllowed('GET, HEAD'));
+router.patch('/:districtId/generation-summary', methodNotAllowed('GET, HEAD'));
+router.delete('/:districtId/generation-summary', methodNotAllowed('GET, HEAD'));
 
 module.exports = router;

@@ -4,7 +4,7 @@
 
 const { ApiError } = require('../utils/errors');
 const { parseQuery, parseObjectIdParam } = require('../schemas/common');
-const { districtQuerySchema } = require('../schemas/districtQuery');
+const { districtQuerySchema, districtGenerationSummaryQuerySchema } = require('../schemas/districtQuery');
 const { scopedGridSubstationQuerySchema } = require('../schemas/gridSubstationQuery');
 const { districtReadingQuerySchema } = require('../schemas/readingQuery');
 const { sendAtomicConditional, sendHashConditional } = require('../utils/conditional');
@@ -131,9 +131,33 @@ async function listReadingsForDistrict(req, res) {
   sendHashConditional(req, res, { body: result, lastModified: newestRecordedAt(result.data) });
 }
 
+// GET /districts/{districtId}/generation-summary (spec 5.5) - a derived resource, so spec 8.3
+// point 4 applies exactly like the atomic district GET: path-parent-exists 404 -> path-parent-
+// within-jurisdiction 403. No query parameters are defined by the spec, so an unknown one (or an
+// accidental page/page_size, which this endpoint does not support) still gets the normal 400.
+async function getGenerationSummary(req, res) {
+  const districtId = parseObjectIdParam(req.params.districtId, 'districtId');
+  const district = await districtService.getDistrictById(districtId);
+  if (!district) {
+    throw ApiError.notFound('District not found.');
+  }
+  assertResourceWithinJurisdiction(req.auth, districtScope(district));
+  parseQuery(districtGenerationSummaryQuerySchema, req.query);
+
+  const summary = await districtService.getGenerationSummary(district);
+  // Hash ETag (composite/derived resource, spec 6.4) over the exact body being sent. Last-Modified
+  // is the data-derived as_of, not Date.now() - when as_of is null (no data today) there is nothing
+  // meaningful to put in Last-Modified, so it is simply omitted.
+  sendHashConditional(req, res, {
+    body: summary,
+    lastModified: summary.as_of ? new Date(summary.as_of) : undefined,
+  });
+}
+
 module.exports = {
   listDistricts,
   getDistrict,
   listGridSubstationsForDistrict,
   listReadingsForDistrict,
+  getGenerationSummary,
 };

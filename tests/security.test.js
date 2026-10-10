@@ -358,8 +358,9 @@ describe('spec 8.7: District-level jurisdiction', () => {
     expect(res.body.code).toBe('OUT_OF_JURISDICTION');
   });
 
-  // district summary (/districts/{id}/generation-summary) does not exist yet - Phase 9 - skipped
-  // per the task brief, which explicitly allows skipping just that sub-case.
+  // district summary (/districts/{id}/generation-summary): Phase 9 completes this row - see
+  // tests/generationSummary.test.js's "jurisdiction" describe block for the full matrix (district,
+  // province, national/admin, in and out of scope).
 
   it('district user lists /installations -> only own-district documents, correct total', async () => {
     const res = await request(app).get('/api/v1/installations').set('Authorization', bearer(districtColombo));
